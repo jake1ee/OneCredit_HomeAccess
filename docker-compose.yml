@@ -23,3 +23,40 @@ services:
       interval: 3s
       timeout: 5s
       retries: 30
+
+  consumer:
+    profiles: ["app"]
+    build: .
+    command: ["python", "-m", "app.consumer"]
+    environment: &app-env
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/companies?connect_timeout=5
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      LOG_LEVEL: INFO
+    volumes:
+      - models:/models  # the model is downloaded here once and reused across restarts
+    depends_on:
+      postgres: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+    restart: unless-stopped
+    stop_grace_period: 15s  # time to finish in-flight messages after SIGTERM
+
+  api:
+    profiles: ["app"]
+    build: .
+    command: ["python", "-m", "app.serve"]
+    environment:
+      <<: *app-env
+      API_HOST: 0.0.0.0
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    depends_on:
+      postgres: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+volumes:
+  models:  # the embedding model cache; `docker compose down -v` removes it
